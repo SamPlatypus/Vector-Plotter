@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Vector Plotter</title>
+  <meta name="description" content="Plot and explore 2D vector fields offline: type an equation, watch particles flow, tap anywhere to read the vector.">
+  <meta name="theme-color" content="#0a0e16">
+  <meta name="color-scheme" content="dark light">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vectors">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <!-- ============================================================ canvas -->
+    <main id="stage" aria-label="Vector field plot">
+      <canvas id="cv-field" aria-hidden="true"></canvas>
+      <canvas id="cv-flow" role="img" aria-label="Interactive vector field. Tap or hover to read values; drag to pan; pinch or scroll to zoom."></canvas>
+
+      <div class="brand stage-brand" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="brand-mark"><use href="#i-logo"/></svg>
+        <span>Vector Plotter</span>
+      </div>
+
+      <section id="readout" class="readout" hidden aria-live="polite" aria-label="Probe readout">
+        <header class="ro-head">
+          <span class="ro-title">At <span id="ro-pos" class="mono">(0, 0)</span></span>
+          <button id="ro-close" class="icon-btn small" type="button" aria-label="Remove probe">
+            <svg viewBox="0 0 24 24"><use href="#i-close"/></svg>
+          </button>
+        </header>
+        <div class="ro-vec mono"><i>F</i> = (<b id="ro-fx">0</b>, <b id="ro-fy">0</b>)</div>
+        <dl class="ro-grid">
+          <dt>strength |<i>F</i>|</dt><dd class="mono" id="ro-mag">0</dd>
+          <dt>direction</dt><dd class="mono" id="ro-ang">—</dd>
+          <dt>divergence</dt><dd><span class="mono" id="ro-div">0</span> <span class="ro-note" id="ro-div-note"></span></dd>
+          <dt>curl</dt><dd><span class="mono" id="ro-curl">0</span> <span class="ro-note" id="ro-curl-note"></span></dd>
+        </dl>
+        <p class="ro-foot" id="ro-foot">Solid line: where a particle here goes next. Dashed: where it came from.</p>
+      </section>
+
+      <div id="stale" class="stage-badge warn" hidden>Showing the last valid field</div>
+      <div id="time-badge" class="stage-badge time" hidden>
+        <span class="mono"><i>t</i> = <span id="time-badge-val">0.0</span></span>
+      </div>
+
+      <div id="legend" class="legend" aria-hidden="true">
+        <span class="legend-k">|<i>F</i>|</span>
+        <span class="legend-min mono">0</span>
+        <span class="legend-bar" id="legend-bar"></span>
+        <span class="legend-max mono" id="legend-max">1</span>
+      </div>
+
+      <div class="stage-controls">
+        <button id="btn-fit" class="fab secondary" type="button" aria-label="Reset view" title="Reset view (F)">
+          <svg viewBox="0 0 24 24"><use href="#i-fit"/></svg>
+        </button>
+        <button id="btn-play" class="fab primary" type="button" aria-label="Pause animation" title="Play / pause (Space)">
+          <svg viewBox="0 0 24 24" class="if-playing"><use href="#i-pause"/></svg>
+          <svg viewBox="0 0 24 24" class="if-paused"><use href="#i-play"/></svg>
+        </button>
+      </div>
+
+      <div id="hint" class="hint" hidden></div>
+    </main>
+
+    <!-- ============================================================ panel -->
+    <aside id="panel" class="panel" aria-label="Controls">
+      <div class="panel-top">
+        <button id="grip" class="grip" type="button" aria-label="Collapse panel" aria-expanded="true"><span></span></button>
+        <div class="brand panel-brand">
+          <svg viewBox="0 0 24 24" class="brand-mark"><use href="#i-logo"/></svg>
+          <span>Vector Plotter</span>
+        </div>
+        <button id="summary" class="summary" type="button" aria-label="Edit equation">
+          <span class="sum-lhs"><i>F</i>(<i>x</i>, <i>y</i>) =</span>
+          <span class="sum-eq math" id="sum-eq"></span>
+        </button>
+        <nav class="tabs" role="tablist" aria-label="Panels">
+          <button role="tab" class="tab" id="tab-field" aria-controls="pane-field" aria-selected="true" data-pane="field">
+            <svg viewBox="0 0 24 24"><use href="#i-func"/></svg><span>Equation</span>
+          </button>
+          <button role="tab" class="tab" id="tab-presets" aria-controls="pane-presets" aria-selected="false" data-pane="presets">
+            <svg viewBox="0 0 24 24"><use href="#i-grid"/></svg><span>Presets</span>
+          </button>
+          <button role="tab" class="tab" id="tab-display" aria-controls="pane-display" aria-selected="false" data-pane="display">
+            <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg><span>Display</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="panel-body" id="panel-body">
+        <!-- ---------------------------------------------------- Equation -->
+        <section class="pane" id="pane-field" role="tabpanel" aria-labelledby="tab-field">
+          <p class="lede">A vector field gives every point an arrow. Describe the arrow’s
+            <b>sideways</b> and <b>up/down</b> parts using <i class="m">x</i> and <i class="m">y</i>.</p>
+
+          <div class="eq" data-comp="x">
+            <label class="eq-label" for="in-x">
+              <span class="eq-name math"><i>F</i><sub><i>x</i></sub> =</span>
+              <span class="sr">sideways part</span>
+            </label>
+            <div class="eq-box">
+              <input id="in-x" class="eq-input" type="text" inputmode="text" enterkeyhint="next" placeholder="sideways push, e.g. -y"
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                     aria-describedby="pv-x">
+              <span class="eq-state" aria-hidden="true"></span>
+            </div>
+            <div class="eq-preview math" id="pv-x" aria-live="polite"></div>
+          </div>
+
+          <div class="eq" data-comp="y">
+            <label class="eq-label" for="in-y">
+              <span class="eq-name math"><i>F</i><sub><i>y</i></sub> =</span>
+              <span class="sr">up/down part</span>
+            </label>
+            <div class="eq-box">
+              <input id="in-y" class="eq-input" type="text" inputmode="text" enterkeyhint="done" placeholder="up/down push, e.g. x"
+                     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                     aria-describedby="pv-y">
+              <span class="eq-state" aria-hidden="true"></span>
+            </div>
+            <div class="eq-preview math" id="pv-y" aria-live="polite"></div>
+          </div>
+
+          <div class="chips" id="chips" role="toolbar" aria-label="Insert into equation"></div>
+
+          <div class="group" id="params-group">
+            <h3 class="group-title">Sliders</h3>
+            <div id="params"></div>
+            <p class="tip" id="params-tip">Tip: put <i class="m">a</i>, <i class="m">b</i> or <i class="m">c</i>
+              in a formula (like <code>a x − y</code>) and a slider appears here.</p>
+          </div>
+
+          <div class="group time-group" id="time-group" hidden>
+            <div class="time-row">
+              <span>This field changes with time <i class="m">t</i>.</span>
+              <span class="mono time-val"><i>t</i> = <span id="t-val">0.00</span></span>
+              <button id="t-reset" class="btn ghost small" type="button">Restart</button>
+            </div>
+          </div>
+
+          <details class="help">
+            <summary>What can I type?</summary>
+            <div class="help-body">
+              <table>
+                <tr><th>Variables</th><td><code>x</code> <code>y</code> position · <code>t</code> time ·
+                  <code>r</code> distance from origin · <code>θ</code> or <code>theta</code> angle</td></tr>
+                <tr><th>Sliders</th><td><code>a</code> <code>b</code> <code>c</code></td></tr>
+                <tr><th>Constants</th><td><code>pi</code> or <code>π</code>, <code>e</code></td></tr>
+                <tr><th>Operators</th><td><code>+ − * / ^</code> and brackets. <code>2x</code>, <code>x y</code>
+                  and <code>3(x+1)</code> multiply automatically.</td></tr>
+                <tr><th>Functions</th><td><code>sin cos tan</code> · <code>asin acos atan atan2(y, x)</code> ·
+                  <code>sinh cosh tanh</code> · <code>exp ln log sqrt abs</code> ·
+                  <code>min max mod floor ceil round sign</code></td></tr>
+              </table>
+              <p>Parentheses are optional for simple inputs: <code>sin x</code> means <code>sin(x)</code>,
+                <code>sin 2x</code> means <code>sin(2x)</code>. The line under each box shows exactly how your
+                formula was read.</p>
+              <p><b>On the plot:</b> tap (or hover) to probe a point · drag to pan · pinch or scroll to zoom.</p>
+            </div>
+          </details>
+        </section>
+
+        <!-- ---------------------------------------------------- Presets -->
+        <section class="pane" id="pane-presets" role="tabpanel" aria-labelledby="tab-presets" hidden>
+          <p class="lede">Tap a field to load it. Everything stays editable afterwards.</p>
+          <div class="preset-grid" id="preset-grid"></div>
+        </section>
+
+        <!-- ---------------------------------------------------- Display -->
+        <section class="pane" id="pane-display" role="tabpanel" aria-labelledby="tab-display" hidden>
+          <div class="group">
+            <div class="group-head">
+              <h3 class="group-title">Arrows</h3>
+              <label class="switch"><input type="checkbox" id="s-arrows"><span class="track"></span><span class="sr">Show arrows</span></label>
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><label for="s-density">Density</label><output id="o-density" for="s-density"></output></div>
+              <input type="range" id="s-density" min="0" max="100" step="1">
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><span id="l-mode">Length</span></div>
+              <div class="seg" role="radiogroup" aria-labelledby="l-mode" id="s-mode">
+                <button type="button" role="radio" data-v="uniform">All the same</button>
+                <button type="button" role="radio" data-v="magnitude">Shows strength</button>
+              </div>
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><label for="s-size">Size</label><output id="o-size" for="s-size"></output></div>
+              <input type="range" id="s-size" min="0.5" max="1.6" step="0.05">
+            </div>
+            <label class="row-switch">
+              <span>Color by strength</span>
+              <span class="switch"><input type="checkbox" id="s-colorArrows"><span class="track"></span></span>
+            </label>
+          </div>
+
+          <div class="group">
+            <div class="group-head">
+              <h3 class="group-title">Flow particles</h3>
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><label for="s-particles">How many</label><output id="o-particles" for="s-particles"></output></div>
+              <input type="range" id="s-particles" min="0" max="4000" step="50">
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><label for="s-trail">Trail length</label><output id="o-trail" for="s-trail"></output></div>
+              <input type="range" id="s-trail" min="0" max="60" step="1">
+            </div>
+            <div class="ctl">
+              <div class="ctl-head"><label for="s-speed">Speed</label><output id="o-speed" for="s-speed"></output></div>
+              <input type="range" id="s-speed" min="0" max="100" step="1">
+            </div>
+            <label class="row-switch">
+              <span>Color by speed</span>
+              <span class="switch"><input type="checkbox" id="s-colorParticles"><span class="track"></span></span>
+            </label>
+          </div>
+
+          <div class="group">
+            <h3 class="group-title">Canvas</h3>
+            <label class="row-switch">
+              <span>Grid &amp; axes</span>
+              <span class="switch"><input type="checkbox" id="s-grid"><span class="track"></span></span>
+            </label>
+            <div class="ctl">
+              <div class="ctl-head"><span id="l-theme">Theme</span></div>
+              <div class="seg" role="radiogroup" aria-labelledby="l-theme" id="s-theme">
+                <button type="button" role="radio" data-v="auto">Auto</button>
+                <button type="button" role="radio" data-v="dark">Dark</button>
+                <button type="button" role="radio" data-v="light">Light</button>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button type="button" class="btn ghost" id="btn-reseed">Scatter particles</button>
+              <button type="button" class="btn ghost" id="btn-reset-all">Reset settings</button>
+            </div>
+          </div>
+          <p class="foot-note">Works offline. On your phone, use <b>Add to Home Screen</b> to install it as an app.</p>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============================================================ icons -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-logo" viewBox="0 0 24 24">
+      <path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M12 8a4 4 0 1 0 4 4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".65"/>
+      <path d="M17.6 9.4 20.5 12l2.4-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-func" viewBox="0 0 24 24"><path d="M14.5 4.5c-2.2-.6-3.6.4-4 2.6L8.6 17.4c-.4 2.2-1.8 3.2-4 2.6M6.5 10h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m15 12 5 6M20 12l-5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="4" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4" y="13" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="13" width="7" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  </svg>
+
+  <script src="js/parser.js"></script>
+  <script src="js/presets.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
